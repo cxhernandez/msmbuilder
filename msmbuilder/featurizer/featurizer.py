@@ -1345,6 +1345,113 @@ class LogisticContactFeaturizer(ContactFeaturizer):
         return result
 
 
+class SolventShellsFeaturizer(Featurizer):
+    """Featurizer based on local, instantaneous water density.
+
+    Parameters
+    ----------
+    solute_indices : np.ndarray, shape=(n_solute,1)
+        Indices of solute atoms
+    solvent_indices : np.ndarray, shape=(n_solvent, 1)
+        Indices of solvent atoms
+    n_shells : int
+        Number of shells to consider around each solute atom
+    shell_width : float
+        The width of each solvent atom
+    periodic : bool
+        Whether to consider a periodic system in distance calculations
+
+    Returns
+    -------
+    shellcounts : np.ndarray, shape=(n_frames, n_solute, n_shells)
+        Number of solvent atoms in shell_i around solute_i at frame_i
+
+    References
+    ----------
+    ..[1] Harrigan, et al. J. Chem. Theory Comput., 2015, 11 (3), pp 1094–1101
+    doi:10.1021/ct5010017.
+    """
+
+    def __init__(self, solute_indices, solvent_indices, n_shells, shell_width,
+                 periodic=True):
+        self.solute_indices = solute_indices
+        self.solvent_indices = solvent_indices
+        self.n_shells = n_shells
+        self.shell_width = shell_width
+        self.periodic = periodic
+        self.n_solute = len(self.solute_indices)
+        self.n_features = self.n_solute * self.n_shells
+
+    def _normalize(self, fp3d, shell_w):
+        """Normalize by 4 pi r^2 dr.
+
+        :param fp3d: array of shape (n_frames, n_solute, n_shells)
+        :param shell_w: Shell width
+        """
+        _, _, n_shell = fp3d.shape
+        shell_edges = np.linspace(0, shell_w * (n_shell), num=(n_shell + 1))
+        shell_mids = (np.diff(shell_edges) / 2) + shell_edges[:-1]
+        norm = 4 * np.pi * (shell_mids ** 2) * shell_w
+        norm = norm[np.newaxis, np.newaxis, :]
+        fp3d_norm = fp3d / norm
+        return fp3d_norm
+
+    def _reshape(fp3d):
+        """Reduce 3d array to 2d.
+
+        We start with indices (frame, solute, shell) and convert to
+        (frame, {solute*shell}), or alternatively (frame, feature)
+
+        :param fp3d: array of shape (n_frames, n_solute, n_shells)
+        """
+        n_frame, n_solute, n_shell = fp3d.shape
+        fp2d = np.reshape(fp3d, (n_frame, n_solute * n_shell))
+        return fp2d
+
+    def partial_transform(self, traj):
+        """Featurize a trajectory using the solvent shells metric.
+
+        Returns
+        -------
+        shellcounts : np.ndarray, shape=(n_frames, n_solute * n_shells)
+            For each frame, the instantaneous density in a shell around
+            a solute. Features are grouped by solute (not shell)
+        """
+
+        # Set up parameters
+        n_shell = self.n_shells
+        shell_w = self.shell_width
+        shell_edges = np.linspace(0, shell_w * (n_shell + 1),
+                                  num=(n_shell + 1), endpoint=True)
+
+        # Initialize arrays
+        atom_pairs = np.zeros((len(self.solvent_indices), 2))
+        shellcounts = np.zeros((traj.n_frames, self.n_solute, n_shell),
+                               dtype=np.int)
+
+        for i, solute_i in enumerate(self.solute_indices):
+            # For each solute atom, calculate distance to all solvent
+            # molecules
+            atom_pairs[:, 0] = solute_i
+            atom_pairs[:, 1] = self.solvent_indices
+
+            distances = md.compute_distances(traj, atom_pairs,
+                                             periodic=self.periodic)
+
+            for j in range(n_shell):
+                # For each shell, do boolean logic
+                shell_bool = np.logical_and(
+                    distances >= shell_edges[j],
+                    distances < shell_edges[j + 1]
+                )
+                # And count the number in this shell
+                shellcounts[:, i, j] = np.sum(shell_bool, axis=1)
+
+        shellcounts = self._normalize(shellcounts, shell_w)
+        shellcounts = self._reshape(shellcounts)
+        return shellcounts
+
+
 class GaussianSolventFeaturizer(Featurizer):
     """Featurizer on weighted pairwise distance between solute and solvent.
 
