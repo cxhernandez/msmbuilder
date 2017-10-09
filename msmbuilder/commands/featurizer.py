@@ -17,7 +17,7 @@ from ..featurizer import (AtomPairsFeaturizer, SuperposeFeaturizer,
                           LogisticContactFeaturizer, VonMisesFeaturizer,
                           FunctionFeaturizer, RawPositionsFeaturizer,
                           SASAFeaturizer, LigandContactFeaturizer,
-                          BinaryLigandContactFeaturizer,
+                          BinaryLigandContactFeaturizer, SolventShellsFeaturizer,
                           LigandRMSDFeaturizer,LandMarkRMSDFeaturizer, AngleFeaturizer)
 
 
